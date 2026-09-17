@@ -1,0 +1,26 @@
+{
+  "name": "product-image-scraper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gera termos de busca com Ollama e baixa imagens de produtos em alta qualidade",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:meili": "docker compose up -d meilisearch"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@imgly/background-removal-node": "^1.4.5",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "meilisearch": "^0.62.0",
+    "multer": "^2.4.0",
+    "sharp": "^0.33.5",
+    "tesseract.js": "^7.0.0"
+  }
+}

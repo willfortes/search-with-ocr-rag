@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# Runtime data
+downloads/
+**/downloads/**
+**/.ocr-cache.json
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build / temp
+tmp/
+temp/
+*.tmp
+.cache/
+
+# Docker volumes (if ever mounted here)
+meili_data/
+ollama_data/

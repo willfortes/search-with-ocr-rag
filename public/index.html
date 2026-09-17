@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Image Scraper</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div>
+        <p class="eyebrow">CriarOfertas · ferramenta local</p>
+        <h1>Product Image Scraper</h1>
+        <p class="subtitle">Scraper + remoção de fundo + banco Meilisearch/OCR com API para o CriarOfertas</p>
+      </div>
+      <div id="statusCard" class="status-card status-loading">Verificando serviços…</div>
+    </header>
+
+    <nav class="view-tabs" aria-label="Seções">
+      <button type="button" class="view-tab active" data-view="scraper">Scraper</button>
+      <button type="button" class="view-tab" data-view="bank">Banco API</button>
+      <a class="view-tab link" href="/docs/API.md" target="_blank" rel="noopener">docs/API.md</a>
+    </nav>
+
+    <div id="view-scraper" class="view">
+      <main class="grid">
+        <section class="panel">
+          <h2>1. Produtos</h2>
+          <p class="hint">Um produto por linha. Só itens de supermercado (caminhão etc. são rejeitados).</p>
+          <textarea id="productsInput" rows="12" placeholder="Cerveja Brahma Lata 350ml
+Arroz Tio João 5kg
+Sabão em pó Omo 1,6kg"></textarea>
+
+          <div class="row">
+            <label>
+              Modelo Ollama
+              <select id="modelSelect" disabled>
+                <option value="">Detectando modelos…</option>
+              </select>
+            </label>
+            <label class="checkbox">
+              <input id="useAi" type="checkbox" checked />
+              Usar IA local
+            </label>
+          </div>
+          <p id="modelHint" class="hint model-hint">Os modelos vêm automaticamente do Ollama instalado nesta máquina.</p>
+
+          <div class="actions">
+            <button id="btnTerms" class="btn primary" type="button">Gerar termos com IA</button>
+          </div>
+
+          <hr class="panel-divider" />
+          <h3 class="subhead">Buscar por imagem</h3>
+          <p class="hint">Envie uma foto da embalagem. O app lê o texto (OCR), monta o termo e busca packshots similares.</p>
+          <label>
+            Imagem do produto
+            <input id="imageSearchFile" type="file" accept="image/*" />
+          </label>
+          <label>
+            Nome do produto (opcional)
+            <input id="imageSearchProduct" type="text" placeholder="Ex.: Brahma Lata 350ml" />
+          </label>
+          <div id="imageSearchPreview" class="image-search-preview hint">Nenhuma imagem selecionada.</div>
+          <div class="actions">
+            <button id="btnImagePreview" class="btn ghost" type="button">Só analisar (OCR)</button>
+            <button id="btnImageScrape" class="btn accent" type="button">Buscar e baixar</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>2. Termos de busca</h2>
+          <p class="hint">Edite antes de começar. Quanto melhor o termo, melhor a imagem.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Termo de busca</th>
+                  <th>Fonte</th>
+                </tr>
+              </thead>
+              <tbody id="termsBody">
+                <tr class="empty"><td colspan="3">Gere os termos para ver a lista aqui.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="row compact">
+            <label>
+              Imagens por produto
+              <input id="perProduct" type="number" min="1" max="10" value="10" />
+            </label>
+            <label>
+              Largura mínima (px)
+              <input id="minWidth" type="number" min="200" max="2000" value="400" />
+            </label>
+            <label>
+              Delay entre produtos (ms)
+              <input id="delayMs" type="number" min="300" max="5000" value="1200" />
+            </label>
+          </div>
+
+          <div class="row compact">
+            <label class="checkbox inline">
+              <input id="removeBg" type="checkbox" checked />
+              Remover fundo (batch local)
+            </label>
+            <label>
+              Paralelo BG
+              <input id="bgConcurrency" type="number" min="1" max="4" value="2" />
+            </label>
+            <label>
+              Modelo BG
+              <select id="bgModel">
+                <option value="medium" selected>medium (melhor qualidade)</option>
+                <option value="small">small (mais rápido)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="btnStart" class="btn accent" type="button" disabled>Começar scraping</button>
+            <button id="btnStop" class="btn ghost" type="button" disabled>Parar</button>
+          </div>
+        </section>
+
+        <section class="panel full">
+          <div class="section-head">
+            <h2>3. Progresso & galeria</h2>
+            <button id="btnRefreshGallery" class="btn ghost" type="button">Atualizar galeria</button>
+          </div>
+          <div id="progressMeta" class="progress-meta">Aguardando…</div>
+          <pre id="log" class="log"></pre>
+          <div id="results" class="results"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="view-bank" class="view hidden">
+      <main class="grid">
+        <section class="panel">
+          <h2>Banco Meilisearch</h2>
+          <p class="hint">Indexa <code>downloads/</code> com <strong>OCR em todas as imagens</strong> + embeddings RAG (Ollama) para busca híbrida.</p>
+          <div id="bankStatus" class="bank-status">Checando Meilisearch…</div>
+
+          <label class="checkbox">
+            <input id="bankWithOcr" type="checkbox" checked />
+            OCR em todas as imagens (recomendado; usa cache)
+          </label>
+          <label class="checkbox">
+            <input id="bankWithEmbed" type="checkbox" checked />
+            RAG / embeddings (precisa: <code>ollama pull nomic-embed-text</code>)
+          </label>
+
+          <div class="actions">
+            <button id="btnBankIndex" class="btn primary" type="button">Indexar downloads</button>
+            <button id="btnPurgeWatermarks" class="btn ghost" type="button">Remover marcas d'água</button>
+            <button id="btnBankClear" class="btn ghost" type="button">Limpar índice</button>
+            <button id="btnBankHealth" class="btn ghost" type="button">Refresh status</button>
+          </div>
+          <p class="hint">Novas buscas já bloqueiam Shutterstock/Getty/etc. Use “Remover marcas d'água” para limpar o que já baixou.</p>
+
+          <p class="hint">Docs: <a href="/docs/API.md" target="_blank">/docs/API.md</a></p>
+        </section>
+
+        <section class="panel">
+          <h2>Testar API Resolve</h2>
+          <p class="hint">Endpoint para o CriarOfertas: <code>POST /api/resolve</code> — banco primeiro, senão scrape (máx. 10). Só produtos de supermercado.</p>
+
+          <label>
+            Produto
+            <input id="resolveQuery" type="text" placeholder="cerveja brahma" value="cerveja" />
+          </label>
+
+          <div class="row compact">
+            <label>
+              Limit (máx. 10)
+              <input id="resolveLimit" type="number" min="1" max="10" value="10" />
+            </label>
+            <label>
+              Offset
+              <input id="resolveOffset" type="number" min="0" max="200" value="0" />
+            </label>
+            <label>
+              Kind
+              <select id="resolveKind">
+                <option value="nobg" selected>nobg</option>
+                <option value="original">original</option>
+                <option value="any">todos</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="checkbox">
+            <input id="resolveScrape" type="checkbox" checked />
+            Scrape se não existir no banco
+          </label>
+
+          <div class="actions">
+            <button id="btnResolve" class="btn accent" type="button">Resolver</button>
+            <button id="btnResolveMore" class="btn ghost" type="button" disabled>Buscar mais (+10)</button>
+          </div>
+
+          <pre id="bankRequest" class="log bank-request">Request aparecerá aqui…</pre>
+        </section>
+
+        <section class="panel">
+          <h2>Busca direta no Meilisearch</h2>
+          <p class="hint"><code>GET /api/bank/search</code> — só índice, sem scrape.</p>
+
+          <label>
+            Query
+            <input id="bankQuery" type="text" placeholder="brahma lata" value="brahma" />
+          </label>
+
+          <div class="row compact">
+            <label>
+              Kind
+              <select id="bankKind">
+                <option value="">todos</option>
+                <option value="nobg" selected>nobg</option>
+                <option value="original">original</option>
+              </select>
+            </label>
+            <label>
+              Limit
+              <input id="bankLimit" type="number" min="1" max="100" value="12" />
+            </label>
+            <label>
+              Folder (opcional)
+              <input id="bankFolder" type="text" placeholder="brahma" />
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="btnBankSearch" class="btn primary" type="button">Buscar no índice</button>
+          </div>
+        </section>
+
+        <section class="panel full">
+          <h2>Resultados da API</h2>
+          <div id="bankMeta" class="progress-meta">Faça uma busca para ver os hits.</div>
+          <div id="bankHits" class="modal-grid"></div>
+          <pre id="bankJson" class="log"></pre>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="galleryModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <div>
+          <h2 id="modalTitle">Produto</h2>
+          <p id="modalMeta" class="hint"></p>
+        </div>
+        <div id="modalActions" class="card-actions">
+          <button type="button" class="btn ghost" data-close-modal>Fechar</button>
+        </div>
+      </header>
+      <div class="modal-tabs">
+        <button type="button" class="tab active" data-tab="nobg">Sem fundo</button>
+        <button type="button" class="tab" data-tab="original">Originais</button>
+      </div>
+      <div id="modalGrid" class="modal-grid"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
