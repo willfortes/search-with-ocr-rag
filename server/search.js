@@ -154,6 +154,14 @@ export function scoreCandidate(item) {
   if (url.includes('.webp')) score += 50_000;
   if (url.includes('.gif')) score -= 300_000;
   if (url.includes('sprite') || url.includes('icon') || url.includes('logo')) score -= 400_000;
+  // Mockups / diagramas de embalagem
+  if (/mockup|dieline|diagram|infographic|kraft|packaging-types|tipos-de-embalagem|blank.?pouch|empty.?pouch|paper.?bag/.test(url + title)) {
+    score -= 8_000_000;
+  }
+  // Packshot real de limpeza
+  if (/detergente|limpol|omo|ype|ariel|frasco|bottle|garrafa/.test(url + title)) {
+    score += 400_000;
+  }
 
   if (item.width >= 800 && item.height >= 800) score += 300_000;
   if (item.width >= 1500 || item.height >= 1500) score += 500_000;

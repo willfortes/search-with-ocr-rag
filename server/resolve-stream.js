@@ -419,23 +419,33 @@ async function finalizeDownloadedFile({
     return null;
   }
 
-  // Sem OCR no caminho quente: rejeita se a URL não cita o produto nem parece packshot
+  // Sem OCR no caminho quente: exige o produto na URL (evita mockup/diagrama genérico)
   const qTokens = String(query || productLabel || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((t) => t.length >= 4);
+    .filter((t) => t.length >= 4 && !['pack', 'packshot', 'produto', 'product', 'fundo', 'branco'].includes(t));
   const urlNorm = String(sourceUrl || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
   const hasProductHint = qTokens.some((t) => urlNorm.includes(t));
-  const looksPackshot =
-    /packshot|embalagem|transparent|pngwing|cleanpng|produto|product|garrafa|pacote|bottle|package|label/.test(
+  // NÃO aceitar "package/embalagem/produto" sozinho — diagrama de embalagens passa nisso
+  const looksRealPackshot =
+    /packshot|transparent|pngwing|cleanpng|frasco|garrafa|bottle|detergente|limpol|ype|ypê|omo|ariel|vanish|amaciante|sabao|sabão/.test(
       urlNorm
     );
-  if (qTokens.length && !hasProductHint && !looksPackshot) {
+  if (qTokens.length && !hasProductHint && !looksRealPackshot) {
+    await fs.unlink(finalPath).catch(() => {});
+    return null;
+  }
+  // Se a URL parece mockup/diagrama mesmo com token fraco, rejeita
+  if (
+    /mockup|dieline|diagram|infographic|kraft|paper.?bag|empty.?pouch|blank.?pouch|tipos.?de.?embalagem|packaging.?types|batata|potato/.test(
+      urlNorm
+    )
+  ) {
     await fs.unlink(finalPath).catch(() => {});
     return null;
   }
