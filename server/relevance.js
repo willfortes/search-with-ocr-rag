@@ -1,6 +1,14 @@
 /**
  * Filtra imagens irrelevantes (borboleta, árvore, etc.) usando OCR + aliases de marca.
  */
+import {
+  buildDepartmentSearchQuery,
+  detectDepartment,
+  expandProductSynonyms,
+  passesUrlRelevanceGate,
+} from './departments.js';
+
+export { passesUrlRelevanceGate, detectDepartment, buildDepartmentSearchQuery };
 
 const BRAND_ALIASES = {
   coca: ['coca', 'cola', 'cocacola', 'coca-cola', 'coke'],
@@ -204,6 +212,14 @@ const PRODUCT_CATEGORIES = [
     tokens: ['amaciante', 'desinfetante', 'multiuso', 'agua sanitaria', 'água sanitária'],
     conflicts: ['shampoo', 'farofa', 'azeite', 'leite', 'suco'],
   },
+  {
+    id: 'carnes',
+    tokens: [
+      'carne', 'maminha', 'picanha', 'alcatra', 'bovina', 'frango', 'peixe', 'linguica',
+      'salsicha', 'bacon', 'bife', 'acougue',
+    ],
+    conflicts: ['oleo', 'azeite', 'detergente', 'shampoo', 'refrigerante', 'cerveja', 'mel', 'leite'],
+  },
 ];
 
 /** Tokens genéricos de embalagem — sozinhos NÃO bastam para aceitar a imagem */
@@ -249,7 +265,7 @@ function meaningfulTokens(text) {
     .filter((t) => t.length >= 3 && !/^\d+$/.test(t));
 }
 
-/** Expande query curta com aliases (coca → coca cola coke…) */
+/** Expande query curta com aliases (coca → coca cola coke…) + sinônimos de corte/dept */
 export function expandQueryTokens(query) {
   const n = normalize(query);
   const tokens = new Set(meaningfulTokens(query));
@@ -257,6 +273,12 @@ export function expandQueryTokens(query) {
     if (n === brand || n.includes(brand) || aliases.some((a) => n === normalize(a) || n.includes(normalize(a)))) {
       for (const a of aliases) tokens.add(normalize(a).replace(/-/g, ''));
       tokens.add(brand);
+    }
+  }
+  for (const syn of expandProductSynonyms(query)) {
+    tokens.add(syn.replace(/\s+/g, ''));
+    for (const part of syn.split(/\s+/)) {
+      if (part.length >= 3) tokens.add(part);
     }
   }
   // também versão sem hífen
@@ -267,48 +289,28 @@ export function expandQueryTokens(query) {
 }
 
 /**
- * Termo Bing mais restrito a packshot de supermercado.
+ * Termo Bing otimizado por departamento de mercado (carnes, limpeza, bebidas…).
+ * NÃO injeta "frasco/detergente" em buscas que não são limpeza.
  */
 export function supermarketSearchQuery(productName, aiTerm = '') {
-  const base = String(aiTerm || productName || '').trim() || 'produto';
-  const expanded = expandQueryTokens(productName);
-  const cats = detectCategories(normalize(productName));
-  const categoryBoost = cats.map((c) => c.tokens[0]).join(' ');
-  const brandBoost =
-    expanded.length && !expanded.every((t) => normalize(base).includes(t))
-      ? expanded.filter((t) => !WEAK_QUERY_TOKENS.has(t)).slice(0, 3).join(' ')
-      : '';
-  // NÃO usar "supermercado" sozinho — Bing devolve carrinho/loja 3D.
-  // Preferir packshot isolado da embalagem.
-  const core = [
-    categoryBoost,
-    brandBoost,
-    `"${base}"`,
-    'packshot',
-    'detergente limpeza',
-    'fundo branco',
-    '-carrinho',
-    '-shopping',
-    '-mockup',
-    '-3d',
-    '-pouch',
-    '-kraft',
-    '-diagram',
-    '-shampoo',
-    '-empty',
-    '-blank',
-    '-batata',
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  // Só injeta "detergente limpeza" quando a busca é de limpeza; senão remove
-  let q = core;
-  if (!/detergente|limpeza|amaciante|sabao|sabão|desinfetante/i.test(base + categoryBoost)) {
-    q = q.replace(/\bdetergente limpeza\b/g, 'frasco produto');
+  const name = String(productName || '').trim() || 'produto';
+  const ai = String(aiTerm || '').trim();
+  const deptQuery = buildDepartmentSearchQuery(name);
+
+  // Ignora fallback genérico do Ollama (packshot/supermercado) — departamentos mandam
+  const aiIsGeneric = !ai || /packshot|embalagem produto|supermercado|transparent background/i.test(ai);
+  if (aiIsGeneric || normalize(ai) === normalize(name) || normalize(ai).startsWith(normalize(name))) {
+    return deptQuery;
   }
-  return q.slice(0, 260);
+
+  // AI trouxe termo útil (marca/variante) — acrescenta sem poluir
+  const aiExtra = ai
+    .replace(/packshot|embalagem|produto|supermercado|high resolution|png|transparent|background/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+  if (!aiExtra || normalize(deptQuery).includes(normalize(aiExtra))) return deptQuery;
+  return `${deptQuery} ${aiExtra}`.replace(/\s+/g, ' ').trim().slice(0, 260);
 }
 
 function detectCategories(textNorm) {
@@ -346,6 +348,14 @@ export function scoreProductRelevance(
 
   if (looksLikeJunkStock(url) || looksLikeJunkStock(file) || looksLikeJunkStock(product)) {
     return { ok: false, score: -25, reason: 'junk_stock_url' };
+  }
+
+  // Gate de departamento na URL (carne ≠ óleo, etc.)
+  if (url) {
+    const gate = passesUrlRelevanceGate(`${url} ${file} ${product}`, query);
+    if (!gate.ok && (gate.reason === 'junk' || gate.reason.startsWith('conflict'))) {
+      return { ok: false, score: -22, reason: `url_${gate.reason}` };
+    }
   }
 
   for (const junk of JUNK_OCR_HINTS) {

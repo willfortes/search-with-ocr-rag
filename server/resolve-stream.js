@@ -26,6 +26,7 @@ import {
   supermarketSearchQuery,
   scoreProductRelevance,
   looksLikeJunkStock,
+  passesUrlRelevanceGate,
 } from './relevance.js';
 import { looksLikeWatermarkSource } from './watermark.js';
 import { checkGoWorker, downloadParallelGo } from './go-downloader.js';
@@ -257,7 +258,7 @@ export async function resolveProductImagesStream(req, res) {
       return;
     }
 
-    const ranked = rankCandidates(candidates).filter(
+    const ranked = rankCandidates(candidates, productLabel).filter(
       (c) => !looksLikeWatermarkSource(c.url || '', c.title || '').watermarked
     );
 
@@ -419,43 +420,10 @@ async function finalizeDownloadedFile({
     return null;
   }
 
-  // Sem OCR no caminho quente: a URL PRECISA citar o produto (evita garrafa genérica / shampoo / mockup)
-  const qTokens = String(query || productLabel || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(
-      (t) =>
-        t.length >= 4 &&
-        !['pack', 'packshot', 'produto', 'product', 'fundo', 'branco', 'frasco', 'garrafa', 'bottle'].includes(t)
-    );
-  const urlNorm = String(sourceUrl || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-  const hasProductHint = qTokens.some((t) => urlNorm.includes(t));
-  // Marcas conhecidas contam como match mesmo se a query for genérica ("detergente")
-  const brandInUrl =
-    /limpol|ype|yp[eê]|omo|ariel|vanish|cif|ajax|minuano|brilhante|urca|comfort|downy|surf|tide|persil/.test(
-      urlNorm
-    );
-  if (qTokens.length && !hasProductHint && !brandInUrl) {
-    await fs.unlink(finalPath).catch(() => {});
-    return null;
-  }
-  // Se a URL parece mockup/diagrama/shampoo genérico sem o termo pedido, rejeita
-  if (
-    /mockup|dieline|diagram|infographic|kraft|paper.?bag|empty.?pouch|blank.?pouch|tipos.?de.?embalagem|packaging.?types|batata|potato|shampoo|vial|comprimido|pill.?bottle|crumpled|amassado/.test(
-      urlNorm
-   ) &&
-    !hasProductHint
-  ) {
-    await fs.unlink(finalPath).catch(() => {});
-    return null;
-  }
-  // Conflito clássico: busca detergente não pode trazer shampoo
-  if (qTokens.includes('detergente') && /shampoo|condicionador|conditioner/.test(urlNorm) && !/detergente/.test(urlNorm)) {
+  // Gate por departamento: aceita nome do produto OU sinal do dept (ex.: carne/vácuo para maminha)
+  const productQuery = String(query || productLabel || '').trim();
+  const gate = passesUrlRelevanceGate(`${sourceUrl || ''} ${file}`, productQuery);
+  if (!gate.ok) {
     await fs.unlink(finalPath).catch(() => {});
     return null;
   }

@@ -3,6 +3,7 @@ import {
   watermarkExcludeQuerySuffix,
 } from './watermark.js';
 import { looksLikeJunkStock } from './relevance.js';
+import { passesUrlRelevanceGate, detectDepartment } from './departments.js';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -137,11 +138,12 @@ export async function findProductImages(query, { maxResults = 12 } = {}) {
   return unique;
 }
 
-/** Pontua candidatos: prioriza resolução e extensão boa para produto. */
-export function scoreCandidate(item) {
+/** Pontua candidatos: resolução + relevância ao produto/departamento. */
+export function scoreCandidate(item, query = '') {
   const area = (item.width || 0) * (item.height || 0);
   const url = (item.url || '').toLowerCase();
   const title = (item.title || '').toLowerCase();
+  const blob = `${url} ${title}`;
   let score = area;
 
   const wm = looksLikeWatermarkSource(item.url || '', item.title || '');
@@ -149,18 +151,34 @@ export function scoreCandidate(item) {
 
   if (looksLikeJunkStock(url) || looksLikeJunkStock(title)) score -= 10_000_000;
 
+  if (query) {
+    const gate = passesUrlRelevanceGate(blob, query);
+    if (!gate.ok) score -= 12_000_000;
+    else if (gate.reason === 'query') score += 900_000;
+    else if (gate.reason === 'department') score += 450_000;
+  }
+
   if (url.includes('.png')) score += 500_000;
   if (url.includes('transparent') || url.includes('pngwing') || url.includes('cleanpng')) score += 200_000;
   if (url.includes('.webp')) score += 50_000;
   if (url.includes('.gif')) score -= 300_000;
   if (url.includes('sprite') || url.includes('icon') || url.includes('logo')) score -= 400_000;
-  // Mockups / diagramas de embalagem
-  if (/mockup|dieline|diagram|infographic|kraft|packaging-types|tipos-de-embalagem|blank.?pouch|empty.?pouch|paper.?bag/.test(url + title)) {
+  if (/mockup|dieline|diagram|infographic|kraft|packaging-types|tipos-de-embalagem|blank.?pouch|empty.?pouch|paper.?bag/.test(blob)) {
     score -= 8_000_000;
   }
-  // Packshot real de limpeza
-  if (/detergente|limpol|omo|ype|ariel|frasco|bottle|garrafa/.test(url + title)) {
+
+  const dept = query ? detectDepartment(query) : null;
+  if (dept?.id === 'limpeza' && /detergente|limpol|omo|ype|yp[eê]|ariel|frasco|bottle/.test(blob)) {
     score += 400_000;
+  }
+  if (dept?.id === 'carnes' && /carne|maminha|picanha|alcatra|vacuo|bovina|meat|beef|acougue/.test(blob)) {
+    score += 600_000;
+  }
+  if ((dept?.id === 'refrigerantes' || dept?.id === 'bebidas') && /lata|garrafa|refrigerante|suco/.test(blob)) {
+    score += 350_000;
+  }
+  if (dept?.id === 'bebidas_alcoolicas' && /cerveja|vinho|garrafa|lata/.test(blob)) {
+    score += 350_000;
   }
 
   if (item.width >= 800 && item.height >= 800) score += 300_000;
@@ -169,12 +187,16 @@ export function scoreCandidate(item) {
   return score;
 }
 
-export function rankCandidates(candidates) {
+export function rankCandidates(candidates, query = '') {
   return [...candidates]
     .filter((c) => {
       if (looksLikeWatermarkSource(c.url || '', c.title || '').watermarked) return false;
       if (looksLikeJunkStock(c.url || '') || looksLikeJunkStock(c.title || '')) return false;
+      if (query) {
+        const gate = passesUrlRelevanceGate(`${c.url || ''} ${c.title || ''}`, query);
+        if (!gate.ok) return false;
+      }
       return true;
     })
-    .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+    .sort((a, b) => scoreCandidate(b, query) - scoreCandidate(a, query));
 }

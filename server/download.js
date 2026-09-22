@@ -285,7 +285,7 @@ export async function downloadBestImages({
   await fs.mkdir(originalDir, { recursive: true });
   await fs.mkdir(path.join(folder, 'nobg'), { recursive: true });
 
-  const ranked = rankCandidates(candidates);
+  const ranked = rankCandidates(candidates, productName);
   const saved = [];
   const errors = [];
   let attempt = 0;
