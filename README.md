@@ -55,13 +55,17 @@ OLLAMA_EMBED_MODEL=nomic-embed-text
 
 ### 3. Subir
 
+**Local** (com portas no host):
+
 ```bash
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
 ```
 
 - Dashboard: http://localhost:3847  
 - API docs: http://localhost:3847/docs/API.md  
 - Meilisearch: http://localhost:7700  
+
+**EasyPanel / cloud:** use só `docker-compose.yml` (sem `container_name` nem `ports` — o painel expõe o serviço).
 
 ### 4. Indexar
 

@@ -1,0 +1,14 @@
+# Uso local: docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# Publica portas no host (não usar no EasyPanel).
+services:
+  meilisearch:
+    ports:
+      - "7700:7700"
+
+  app:
+    ports:
+      - "3847:3847"
+
+  ollama:
+    ports:
+      - "11434:11434"
