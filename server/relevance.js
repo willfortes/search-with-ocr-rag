@@ -285,37 +285,30 @@ export function supermarketSearchQuery(productName, aiTerm = '') {
     brandBoost,
     `"${base}"`,
     'packshot',
-    'frasco',
-    'garrafa',
+    'detergente limpeza',
     'fundo branco',
     '-carrinho',
     '-shopping',
-    '-cart',
-    '-aisle',
-    '-corredor',
-    '-isometric',
     '-mockup',
     '-3d',
-    '-clipart',
-    '-loja',
-    '-store',
-    '-building',
     '-pouch',
     '-kraft',
     '-diagram',
-    '-infographic',
-    '-dieline',
-    '-template',
+    '-shampoo',
     '-empty',
     '-blank',
     '-batata',
-    '-potato',
   ]
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return core.slice(0, 280);
+  // Só injeta "detergente limpeza" quando a busca é de limpeza; senão remove
+  let q = core;
+  if (!/detergente|limpeza|amaciante|sabao|sabão|desinfetante/i.test(base + categoryBoost)) {
+    q = q.replace(/\bdetergente limpeza\b/g, 'frasco produto');
+  }
+  return q.slice(0, 260);
 }
 
 function detectCategories(textNorm) {
