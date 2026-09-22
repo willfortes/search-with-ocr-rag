@@ -6,6 +6,8 @@ import {
   searchBank,
   indexBank,
   checkBank,
+  loadOcrCache,
+  ensureFolderOcr,
 } from './bank.js';
 import {
   getProductGallery,
@@ -18,6 +20,7 @@ import { findProductImages } from './search.js';
 import { generateSearchTerm, fallbackTerm, checkOllama, OLLAMA_MODEL } from './ollama.js';
 import { processProductBackgrounds, DEFAULT_CONCURRENCY } from './bgremove.js';
 import { validateSupermarketProduct } from './supermarket.js';
+import { filterRelevantImages, supermarketSearchQuery } from './relevance.js';
 
 const DEFAULT_LIMIT = 10;
 
@@ -59,40 +62,80 @@ function mapHit(hit, base) {
   };
 }
 
-function galleryToImages(gallery, { kind = 'nobg', limit = 10, offset = 0, base }) {
+function galleryToImages(gallery, { kind = 'nobg', limit = 10, offset = 0, base, ocrCache = {}, query = '' }) {
   const preferNobg = kind !== 'original';
-  const primary = preferNobg ? gallery.cutouts || [] : gallery.originals || [];
-  const secondary = preferNobg ? gallery.originals || [] : gallery.cutouts || [];
-  const merged = [
-    ...primary.map((img) => ({
-      ...img,
-      kind: img.url?.includes('/nobg/') ? 'nobg' : img.url?.includes('/original/') ? 'original' : 'legacy',
-    })),
-    ...secondary.map((img) => ({
-      ...img,
-      kind: img.url?.includes('/nobg/') ? 'nobg' : img.url?.includes('/original/') ? 'original' : 'legacy',
-    })),
-  ];
+  let merged = [];
 
-  const total = merged.length;
-  const slice = merged.slice(offset, offset + limit);
-  const images = slice.map((img, i) => ({
-    id: `${gallery.folder}__${img.kind}__${img.file}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
-    product: gallery.product,
-    folder: gallery.folder,
-    file: img.file,
-    kind: img.kind,
-    url: absoluteUrl(base, img.url),
-    width: img.width || 0,
-    height: img.height || 0,
-    bytes: img.bytes || 0,
-    hasAlpha: img.kind === 'nobg' || Boolean(img.hasAlpha),
-    tags: [],
-    ocrText: '',
-    _i: offset + i,
-  }));
+  if (kind === 'original') {
+    merged = (gallery.originals || []).map((img) => ({
+      ...img,
+      kind: img.url?.includes('/original/') ? 'original' : 'legacy',
+    }));
+  } else if (kind === null) {
+    // any: nobg primeiro, depois originais sem par em nobg
+    const nobg = (gallery.cutouts || []).map((img) => ({
+      ...img,
+      kind: 'nobg',
+    }));
+    const nobgStems = new Set(nobg.map((img) => String(img.file || '').replace(/^\d+_/, '').replace(/\.[^.]+$/, '')));
+    const originals = (gallery.originals || [])
+      .filter((img) => {
+        const stem = String(img.file || '').replace(/^\d+_/, '').replace(/\.[^.]+$/, '');
+        return !nobgStems.has(stem);
+      })
+      .map((img) => ({
+        ...img,
+        kind: img.url?.includes('/original/') ? 'original' : 'legacy',
+      }));
+    merged = [...nobg, ...originals];
+  } else {
+    // nobg (padrão): só recortes; se não houver, cai nos originais
+    const cutouts = gallery.cutouts || [];
+    merged = (cutouts.length ? cutouts : gallery.originals || []).map((img) => ({
+      ...img,
+      kind: cutouts.length
+        ? 'nobg'
+        : img.url?.includes('/original/')
+          ? 'original'
+          : 'legacy',
+    }));
+  }
 
-  return { images, total };
+  // dedupe por dimensões + tamanho (mesma foto baixada 2x)
+  const seenSig = new Set();
+  merged = merged.filter((img) => {
+    const sig = `${img.width || 0}x${img.height || 0}:${img.bytes || 0}:${String(img.file || '').replace(/^\d+_/, '')}`;
+    if (seenSig.has(sig)) return false;
+    seenSig.add(sig);
+    return true;
+  });
+
+  const withOcr = merged.map((img, i) => {
+    const ocrKey = `${img.kind}/${img.file}`;
+    const cached = ocrCache[ocrKey]?.text || ocrCache[img.file]?.text || '';
+    return {
+      id: `${gallery.folder}__${img.kind}__${img.file}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
+      product: gallery.product,
+      folder: gallery.folder,
+      file: img.file,
+      kind: img.kind,
+      url: absoluteUrl(base, img.url),
+      width: img.width || 0,
+      height: img.height || 0,
+      bytes: img.bytes || 0,
+      hasAlpha: img.kind === 'nobg' || Boolean(img.hasAlpha),
+      tags: [],
+      ocrText: cached,
+      _i: i,
+    };
+  });
+
+  const relevant = query
+    ? filterRelevantImages(withOcr, query, { allowWeakEmpty: true })
+    : withOcr;
+  const total = relevant.length;
+  const images = relevant.slice(offset, offset + limit);
+  return { images, total, filteredOut: withOcr.length - relevant.length };
 }
 
 async function scrapeProductBatch({
@@ -106,7 +149,7 @@ async function scrapeProductBatch({
   minWidth,
 }) {
   const candidates = await findProductImages(searchTerm, {
-    maxResults: Math.min(Math.max(limit * 3, 24), 50),
+    maxResults: Math.min(Math.max(limit * 5, 35), 60),
   });
   if (!candidates.length) {
     return { saved: [], cutouts: [], errors: [{ reason: 'Nenhuma imagem encontrada' }] };
@@ -115,7 +158,7 @@ async function scrapeProductBatch({
   const result = await downloadBestImages({
     productName: folder,
     candidates,
-    perProduct: limit,
+    perProduct: Math.min(Math.max(limit, 10), 15),
     minWidth,
   });
 
@@ -141,6 +184,24 @@ async function scrapeProductBatch({
       ...bgErrors.map((e) => ({ reason: e.reason, file: e.originalFile })),
     ],
   };
+}
+
+function buildSearchTermVariants(productLabel, primaryTerm) {
+  const base = supermarketSearchQuery(productLabel, primaryTerm);
+  const name = String(productLabel || '').trim();
+  return [
+    ...new Set(
+      [
+        base,
+        `${name} packshot embalagem fundo branco`,
+        `${name} lata packshot produto`,
+        `${name} garrafa packshot produto`,
+        `${name} product photo transparent png`,
+      ]
+        .map((t) => t.replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 /**
@@ -181,56 +242,79 @@ export async function resolveProductImages(req, body = {}) {
   const productLabel = displayProductName(folder);
   const bank = await checkBank();
 
-  // 1) Banco Meilisearch
+  // 1) Banco Meilisearch (falha de Meili não pode derrubar o resolve — cai no disco/scrape)
   if (bank.ok) {
-    const search = await searchBank(query, {
-      limit,
-      offset,
-      kind,
-      // se o nome bate com pasta, filtra; senão busca livre (ex.: cerveja → brahma)
-      folder: body.exactFolder ? folder : null,
-    });
+    try {
+      const search = await searchBank(query, {
+        limit: Math.min(Math.max(limit * 4, 20), 40),
+        offset: 0,
+        kind,
+        folder: body.exactFolder ? folder : null,
+      });
 
-    if (search.hits.length) {
-      const total = search.estimatedTotalHits || search.hits.length;
-      const pageHasMore = offset + search.hits.length < total;
-      return {
-        status: 200,
-        body: {
-          ok: true,
-          query,
-          product: search.hits[0].product || productLabel,
-          folder: search.hits[0].folder || folder,
-          source: 'bank',
-          validation,
-          limit,
-          offset,
-          total,
-          // permite “buscar mais” via scrape mesmo com poucas no banco
-          hasMore: pageHasMore || scrapeIfMissing,
-          images: search.hits.map((h) => mapHit(h, base)),
-        },
-      };
+      const relevant = filterRelevantImages(
+        search.hits.map((h) => mapHit(h, base)),
+        query,
+        { allowWeakEmpty: true }
+      );
+      if (relevant.length) {
+        const images = relevant.slice(offset, offset + limit);
+        if (images.length) {
+          return {
+            status: 200,
+            body: {
+              ok: true,
+              query,
+              product: images[0].product || productLabel,
+              folder: images[0].folder || folder,
+              source: 'bank',
+              validation,
+              limit,
+              offset,
+              total: relevant.length,
+              hasMore: offset + images.length < relevant.length || scrapeIfMissing,
+              images,
+            },
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[resolve] Meilisearch indisponível, seguindo disco/scrape:', err.message);
     }
   }
 
-  // 2) Galeria em disco (ainda não indexada)
+  // 2) Galeria em disco — só imagens cujo OCR bate com o produto buscado
   const gallery = await getProductGallery(folder);
   const diskCount =
     (gallery?.cutouts?.length || 0) + (gallery?.originals?.length || 0);
 
-  if (gallery && diskCount > 0 && offset < diskCount) {
-    // indexa em background-ish (await curto) para próximas buscas
-    if (bank.ok) {
-      try {
-      await indexBank({ folder, withOcr: true, withEmbeddings: true });
-      } catch {
-        /* ignore */
-      }
+  if (gallery && diskCount > 0) {
+    await ensureFolderOcr(folder, { maxFiles: 16, preferKind: kind || 'nobg' });
+    const ocrCache = await loadOcrCache(folder);
+    const { images, total, filteredOut } = galleryToImages(gallery, {
+      kind: kind || 'nobg',
+      limit,
+      offset,
+      base,
+      ocrCache,
+      query,
+    });
+
+    if (filteredOut > 0) {
+      console.warn(
+        `[resolve] pasta "${folder}": ${filteredOut} imagem(ns) irrelevantes filtradas pelo OCR`
+      );
     }
 
-    const { images, total } = galleryToImages(gallery, { kind: kind || 'nobg', limit, offset, base });
     if (images.length) {
+      if (bank.ok) {
+        try {
+          // Sem embeddings no caminho quente — indexação leve (só keyword)
+          await indexBank({ folder, withOcr: false, withEmbeddings: false });
+        } catch {
+          /* ignore */
+        }
+      }
       return {
         status: 200,
         body: {
@@ -248,6 +332,7 @@ export async function resolveProductImages(req, body = {}) {
         },
       };
     }
+    // disco só tinha lixo → segue para scrape limpo
   }
 
   // 3) Scrape se permitido
@@ -270,8 +355,19 @@ export async function resolveProductImages(req, body = {}) {
     };
   }
 
-  // "buscar mais": se já tem imagens no disco e offset >= total, baixa mais um lote
-  const needScrape = !gallery || diskCount === 0 || offset >= diskCount;
+  // "buscar mais": se já tem imagens RELEVANTES no disco e offset >= total, baixa mais um lote
+  const ocrCacheProbe = gallery ? await loadOcrCache(folder) : {};
+  const relevantDisk = gallery
+    ? galleryToImages(gallery, {
+        kind: kind || 'nobg',
+        limit: 100,
+        offset: 0,
+        base,
+        ocrCache: ocrCacheProbe,
+        query,
+      }).total
+    : 0;
+  const needScrape = !gallery || relevantDisk === 0 || offset >= relevantDisk;
 
   if (!needScrape) {
     return {
@@ -284,7 +380,7 @@ export async function resolveProductImages(req, body = {}) {
         folder,
         images: [],
         hasMore: false,
-        total: diskCount,
+        total: relevantDisk,
         limit,
         offset,
       },
@@ -307,27 +403,42 @@ export async function resolveProductImages(req, body = {}) {
     }
   }
 
-  // reforça contexto supermercado no termo
-  if (!/supermercado|grocery|packshot/i.test(searchTerm)) {
-    searchTerm = `${searchTerm} packshot supermercado`.slice(0, 180);
-  }
+  searchTerm = supermarketSearchQuery(productLabel, searchTerm);
+  const termVariants = buildSearchTermVariants(productLabel, searchTerm).slice(0, 2);
+  const scrapeErrors = [];
+  const needed = Math.max(limit + offset, limit);
 
-  const scraped = await scrapeProductBatch({
-    product: productLabel,
-    folder,
-    searchTerm,
-    limit,
-    removeBg,
-    bgConcurrency,
-    bgModel,
-    minWidth,
-  });
+  for (let round = 0; round < termVariants.length; round += 1) {
+    const term = termVariants[round];
+    const scraped = await scrapeProductBatch({
+      product: productLabel,
+      folder,
+      searchTerm: term,
+      limit: Math.max(needed, 10),
+      removeBg,
+      bgConcurrency,
+      bgModel,
+      minWidth,
+    });
+    scrapeErrors.push(...(scraped.errors || []));
 
-  if (bank.ok) {
-    try {
-      await indexBank({ folder, withOcr: true, withEmbeddings: true });
-    } catch {
-      /* ignore */
+    // OCR só o necessário para filtrar; embeddings ficam fora do caminho quente
+    await ensureFolderOcr(folder, { maxFiles: Math.max(needed * 2, 12), preferKind: kind || 'nobg' });
+
+    const freshRound = await getProductGallery(folder);
+    if (!freshRound) continue;
+    const ocrCacheRound = await loadOcrCache(folder);
+    const { total } = galleryToImages(freshRound, {
+      kind: kind || 'nobg',
+      limit: 100,
+      offset: 0,
+      base,
+      ocrCache: ocrCacheRound,
+      query,
+    });
+    if (total >= Math.min(needed, limit)) {
+      searchTerm = term;
+      break;
     }
   }
 
@@ -343,7 +454,7 @@ export async function resolveProductImages(req, body = {}) {
         folder,
         searchTerm,
         validation,
-        scrapeErrors: scraped.errors,
+        scrapeErrors,
         images: [],
         hasMore: false,
         total: 0,
@@ -354,15 +465,43 @@ export async function resolveProductImages(req, body = {}) {
     };
   }
 
+  await ensureFolderOcr(folder, { maxFiles: Math.max(limit * 2, 12), preferKind: kind || 'nobg' });
+
   const totalNow =
     (fresh.cutouts?.length || 0) + (fresh.originals?.length || 0);
-  // Após scrape, devolve o primeiro lote (offset 0) das imagens novas
-  const { images } = galleryToImages(fresh, {
+  const ocrCacheFresh = await loadOcrCache(folder);
+  const { images, total: relevantTotal } = galleryToImages(fresh, {
     kind: kind || 'nobg',
     limit,
-    offset: 0,
+    offset,
     base,
+    ocrCache: ocrCacheFresh,
+    query,
   });
+
+  if (!images.length) {
+    return {
+      status: 404,
+      body: {
+        ok: false,
+        error:
+          'Não encontramos imagens adequadas deste produto. Tente um nome mais específico (ex.: coca cola lata).',
+        reason: 'irrelevant_results',
+        query,
+        folder,
+        searchTerm,
+        validation,
+        scrapeErrors,
+        images: [],
+        hasMore: false,
+        total: 0,
+        limit,
+        offset: 0,
+        source: 'scrape',
+        diskTotal: totalNow,
+      },
+    };
+  }
 
   return {
     status: 200,
@@ -374,12 +513,14 @@ export async function resolveProductImages(req, body = {}) {
       source: 'scrape',
       searchTerm,
       validation,
+      scrape: {
+        errors: scrapeErrors,
+      },
       limit,
-      offset: 0,
-      total: totalNow,
-      hasMore: totalNow > limit || scrapeIfMissing,
+      offset,
+      total: relevantTotal,
+      hasMore: offset + images.length < relevantTotal || scrapeIfMissing,
       images,
-      scrapeErrors: scraped.errors,
     },
   };
 }

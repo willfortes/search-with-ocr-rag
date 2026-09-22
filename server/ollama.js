@@ -19,9 +19,11 @@ Sua missão: transformar o nome do produto em UM termo de busca que encontre pac
 Regras:
 - Retorne APENAS o termo de busca, sem aspas, sem explicação, sem markdown.
 - Inclua marca, produto, embalagem/tamanho quando existir no nome.
-- Acrescente palavras que ajudam qualidade: packshot, product photo, high resolution, png, transparent background, fundo branco.
-- Prefira português + inglês no mesmo termo ( marcas BR + termos técnicos EN ).
-- Evite palavras genéricas demais (oferta, barato, promoção).
+- Para marcas curtas (ex.: coca), expanda (Coca-Cola refrigerante lata).
+- Acrescente: packshot, embalagem, product photo, high resolution, png, transparent background, fundo branco, supermercado.
+- NÃO busque stock photo genérico (natureza, pessoas, eletrônicos, fábricas, animais).
+- Prefira português + inglês no mesmo termo (marcas BR + termos técnicos EN).
+- Evite: oferta, barato, promoção, wallpaper, landscape.
 - Máximo 16 palavras.`;
 
 function formatBytes(bytes) {
@@ -123,7 +125,8 @@ export async function generateSearchTerm(productName, model = OLLAMA_MODEL) {
 }
 
 export function fallbackTerm(productName) {
-  return `${productName.trim()} packshot product photo high resolution png transparent`;
+  const name = productName.trim();
+  return `${name} packshot embalagem produto supermercado high resolution png transparent background`;
 }
 
 export { OLLAMA_MODEL, OLLAMA_URL };

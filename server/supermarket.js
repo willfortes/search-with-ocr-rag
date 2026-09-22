@@ -87,6 +87,15 @@ const ALLOW_HINTS = [
   'óleo',
   'sal',
   'farinha',
+  'farofa',
+  'flocao',
+  'flocão',
+  'canjica',
+  'polenta',
+  'milho',
+  'tempero',
+  'extrato',
+  'tomate',
   'pao',
   'pão',
   'bolo',
@@ -258,7 +267,18 @@ export async function validateSupermarketProduct(query, { model, useAi = true } 
     }
   }
 
-  // Sem IA e sem dica clara: rejeita (evita “caminhão” e lixo genérico)
+  // Sem IA: aceita termo curto plausível (mercearia) — evita bloquear "farofa", "nescau", etc.
+  const n = normalize(query);
+  const tokens = n.split(/\s+/).filter((t) => t.length >= 3);
+  if (tokens.length <= 4 && !/\d{5,}/.test(n)) {
+    return {
+      ok: true,
+      reason: 'plausible_grocery',
+      category: null,
+      source: 'conservative_allow',
+    };
+  }
+
   return {
     ok: false,
     reason: 'not_supermarket',

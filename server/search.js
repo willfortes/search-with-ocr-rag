@@ -2,21 +2,29 @@ import {
   looksLikeWatermarkSource,
   watermarkExcludeQuerySuffix,
 } from './watermark.js';
+import { looksLikeJunkStock } from './relevance.js';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 async function fetchText(url) {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': UA,
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-    },
-    redirect: 'follow',
-  });
-  const text = await res.text();
-  return { status: res.status, text, contentType: res.headers.get('content-type') || '' };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      redirect: 'follow',
+    });
+    const text = await res.text();
+    return { status: res.status, text, contentType: res.headers.get('content-type') || '' };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function decodeBingUrl(raw) {
@@ -133,10 +141,13 @@ export async function findProductImages(query, { maxResults = 12 } = {}) {
 export function scoreCandidate(item) {
   const area = (item.width || 0) * (item.height || 0);
   const url = (item.url || '').toLowerCase();
+  const title = (item.title || '').toLowerCase();
   let score = area;
 
   const wm = looksLikeWatermarkSource(item.url || '', item.title || '');
   if (wm.watermarked) score -= 5_000_000;
+
+  if (looksLikeJunkStock(url) || looksLikeJunkStock(title)) score -= 10_000_000;
 
   if (url.includes('.png')) score += 500_000;
   if (url.includes('transparent') || url.includes('pngwing') || url.includes('cleanpng')) score += 200_000;
@@ -152,6 +163,10 @@ export function scoreCandidate(item) {
 
 export function rankCandidates(candidates) {
   return [...candidates]
-    .filter((c) => !looksLikeWatermarkSource(c.url || '', c.title || '').watermarked)
+    .filter((c) => {
+      if (looksLikeWatermarkSource(c.url || '', c.title || '').watermarked) return false;
+      if (looksLikeJunkStock(c.url || '') || looksLikeJunkStock(c.title || '')) return false;
+      return true;
+    })
     .sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
 }

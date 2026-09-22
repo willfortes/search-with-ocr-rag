@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
 import { createWorker } from 'tesseract.js';
-import { listProducts, DOWNLOADS_ROOT } from './download.js';
+import { listProducts, DOWNLOADS_ROOT, getProductGallery } from './download.js';
 import { buildSearchTags, meilisearchSynonyms, inferProductFromOcr } from './taxonomy.js';
 import {
   buildRagText,
@@ -210,6 +210,66 @@ async function loadOcrCache(folder) {
   } catch {
     return {};
   }
+}
+
+export { loadOcrCache };
+
+/**
+ * Roda OCR na pasta do produto (sem depender do Meilisearch).
+ * Necessário antes de filtrar relevância no resolve.
+ */
+export async function ensureFolderOcr(folderInput, opts = {}) {
+  const gallery = await getProductGallery(folderInput);
+  if (!gallery) return { ok: false, ocrCount: 0 };
+
+  const maxFiles = Math.min(Math.max(Number(opts.maxFiles) || 40, 4), 40);
+  const preferKind = opts.preferKind === 'original' ? 'original' : 'nobg';
+
+  const cache = await loadOcrCache(gallery.folder);
+  const cutouts = gallery.cutouts || [];
+  const originals = gallery.originals || [];
+  let targets = [
+    ...cutouts.map((img) => ({ img, kind: 'nobg' })),
+    ...originals.map((img) => ({
+      img,
+      kind: img.url.includes('/original/') ? 'original' : 'legacy',
+    })),
+  ];
+
+  // Prioriza o kind pedido e limita — evita OCR de dezenas de arquivos no caminho quente
+  targets.sort((a, b) => {
+    const score = (t) => (t.kind === preferKind ? 0 : t.kind === 'nobg' ? 1 : 2);
+    return score(a) - score(b);
+  });
+  targets = targets.slice(0, maxFiles);
+
+  let ocrCount = 0;
+  let ocrCached = 0;
+
+  await mapPool(targets, OCR_CONCURRENCY, async ({ img, kind }) => {
+    const key = `${kind}/${img.file}`;
+    const abs = path.join(
+      DOWNLOADS_ROOT,
+      gallery.folder,
+      kind === 'legacy' ? img.file : path.join(kind, img.file)
+    );
+    const mtime = await fileMtimeMs(abs);
+    const cached = cache[key];
+    if (cached && cached.mtime === mtime && typeof cached.text === 'string') {
+      ocrCached += 1;
+      return;
+    }
+    try {
+      const text = await runOcrOnFile(abs);
+      cache[key] = { text, mtime, at: Date.now() };
+      if (text) ocrCount += 1;
+    } catch {
+      /* ignore single file */
+    }
+  });
+
+  await saveOcrCache(gallery.folder, cache);
+  return { ok: true, folder: gallery.folder, ocrCount, ocrCached };
 }
 
 async function saveOcrCache(folder, cache) {

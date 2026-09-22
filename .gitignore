@@ -29,6 +29,10 @@ tmp/
 temp/
 *.tmp
 .cache/
+bin/
+*.traineddata
+_*.txt
+_*.json
 
 # Docker volumes (if ever mounted here)
 meili_data/

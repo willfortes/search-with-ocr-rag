@@ -11,6 +11,8 @@ import { createBankRouter } from './bank-routes.js';
 import { checkBank, deleteBankDocumentsByFolder, indexBank } from './bank.js';
 import { buildSearchFromImage, findCandidatesFromImage } from './image-query.js';
 import { resolveProductImages } from './resolve.js';
+import { resolveProductImagesStream } from './resolve-stream.js';
+import { checkGoWorker } from './go-downloader.js';
 import { validateSupermarketProduct } from './supermarket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,11 +35,16 @@ app.use('/downloads', express.static(DOWNLOADS_ROOT));
 app.use('/api/bank', createBankRouter());
 
 app.get('/api/health', async (_req, res) => {
-  const [ollama, bank] = await Promise.all([checkOllama(), checkBank()]);
+  const [ollama, bank, goWorker] = await Promise.all([
+    checkOllama(),
+    checkBank(),
+    checkGoWorker(),
+  ]);
   res.json({
     ok: true,
     ollama,
     bank,
+    goWorker,
     downloads: DOWNLOADS_ROOT,
     features: {
       backgroundRemoval: true,
@@ -47,6 +54,8 @@ app.get('/api/health', async (_req, res) => {
       rag: true,
       searchByImage: true,
       resolve: true,
+      resolveStream: true,
+      goParallelDownloads: Boolean(goWorker.ok),
       supermarketValidation: true,
       defaultPerProduct: 10,
       maxPerResolve: 10,
@@ -259,6 +268,27 @@ app.post('/api/resolve', async (req, res) => {
     res.status(result.status).json(result.body);
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+/** Resolve progressivo (SSE): imagens chegam conforme processam + status engraçados */
+app.get('/api/resolve/stream', async (req, res) => {
+  try {
+    await resolveProductImagesStream(req, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  }
+});
+
+app.post('/api/resolve/stream', async (req, res) => {
+  try {
+    await resolveProductImagesStream(req, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
   }
 });
 

@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "worker:go": "cd go-worker && go run .",
+    "worker:go:build": "cd go-worker && go build -o ../bin/image-worker.exe .",
     "docker:up": "docker compose up -d --build",
     "docker:down": "docker compose down",
     "docker:meili": "docker compose up -d meilisearch"
