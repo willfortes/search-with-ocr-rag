@@ -37,6 +37,10 @@ export const PRODUCT_SYNONYMS = {
   asa: ['asa', 'frango'],
   tilapia: ['tilapia', 'peixe'],
   salmao: ['salmao', 'peixe'],
+};
+
+/** Frutas ficam fora da lista de cortes. Se entrarem lá, "abacaxi" vira busca de carne. */
+const FRUIT_SYNONYMS = {
   mamao: ['mamao', 'papaya', 'formosa'],
   pera: ['pera', 'pear'],
   abacaxi: ['abacaxi', 'pineapple'],
@@ -130,7 +134,7 @@ export const DEPARTMENTS = [
     match: ['banana', 'maca', 'maçã', 'pera', 'kiwi', 'mamao', 'mamão', 'abacaxi', 'uva', 'morango', 'manga', 'tomate', 'alface', 'cebola', 'batata', 'cenoura', 'laranja', 'limao', 'limão', 'hortifruti', 'fruta', 'verdura'],
     boost: 'hortifruti fresco packshot',
     urlPositive: ['fruta', 'tomate', 'banana', 'pera', 'kiwi', 'mamao', 'abacaxi', 'uva', 'hortifruti', 'verdura'],
-    urlConflict: ['detergente', 'mockup', 'pouch', 'oleo', 'cerveja'],
+    urlConflict: ['detergente', 'mockup', 'pouch', 'oleo', 'cerveja', 'carne', 'bovina', 'beef', 'picanha', 'maminha'],
   },
   {
     id: 'padaria',
@@ -199,8 +203,14 @@ export function detectDepartment(query) {
 
 export function expandProductSynonyms(query) {
   const n = normalize(query);
+  const fruit = FRUIT_SYNONYMS[n];
+  if (fruit) return fruit.map(normalize);
   const syn = PRODUCT_SYNONYMS[n];
   if (syn) return syn.map(normalize);
+  const words = n.split(' ');
+  for (const [key, vals] of Object.entries(FRUIT_SYNONYMS)) {
+    if (words.includes(key)) return vals.map(normalize);
+  }
   // match parcial (ex.: "maminha bovina")
   for (const [key, vals] of Object.entries(PRODUCT_SYNONYMS)) {
     if (n.includes(key)) return vals.map(normalize);
