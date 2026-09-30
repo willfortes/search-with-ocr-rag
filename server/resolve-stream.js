@@ -197,13 +197,12 @@ export async function resolveProductImagesStream(req, res) {
     const gallery = await getProductGallery(folder);
     if (gallery) {
       const ocrCache = await loadOcrCache(folder);
-      const disk = await diskGalleryImages(gallery, {
+      const disk = await pickGalleryImages(gallery, {
         kind: kind === 'any' ? null : kind,
         base,
         ocrCache,
         query,
         limit: limit - emitted,
-        allowWeakEmpty: false,
       });
       for (const img of disk) {
         if (closed || emitted >= limit) break;
@@ -325,13 +324,12 @@ export async function resolveProductImagesStream(req, res) {
         const fresh = await getProductGallery(folder);
         if (fresh) {
           const ocrCache = await loadOcrCache(folder);
-          const disk = await diskGalleryImages(fresh, {
+          const disk = await pickGalleryImages(fresh, {
             kind: 'original',
             base,
             ocrCache,
             query,
             limit: need,
-            allowWeakEmpty: false,
           });
           for (const img of disk) {
             if (closed || emitted >= limit) break;
@@ -449,32 +447,89 @@ async function finalizeDownloadedFile({
   };
 }
 
-async function diskGalleryImages(
-  gallery,
-  { kind, base, ocrCache, query, limit, allowWeakEmpty = true }
-) {
+function selectGalleryList(gallery, kind) {
   const preferOriginal = kind === 'original';
-  let list = [];
   if (preferOriginal) {
-    list = (gallery.originals || []).map((img) => ({
+    return (gallery.originals || []).map((img) => ({
       ...img,
       kind: img.url?.includes('/original/') ? 'original' : 'legacy',
     }));
-  } else if (kind === null) {
-    list = [
+  }
+  if (kind === null) {
+    return [
       ...(gallery.cutouts || []).map((img) => ({ ...img, kind: 'nobg' })),
       ...(gallery.originals || []).map((img) => ({
         ...img,
         kind: img.url?.includes('/original/') ? 'original' : 'legacy',
       })),
     ];
-  } else {
-    const cutouts = gallery.cutouts || [];
-    list = (cutouts.length ? cutouts : gallery.originals || []).map((img) => ({
-      ...img,
-      kind: cutouts.length ? 'nobg' : img.url?.includes('/original/') ? 'original' : 'legacy',
-    }));
   }
+  const cutouts = gallery.cutouts || [];
+  return (cutouts.length ? cutouts : gallery.originals || []).map((img) => ({
+    ...img,
+    kind: cutouts.length ? 'nobg' : img.url?.includes('/original/') ? 'original' : 'legacy',
+  }));
+}
+
+function toFolderImage(gallery, img, base) {
+  return {
+    id: `${gallery.folder}__${img.kind}__${img.file}`.replace(/[^a-zA-Z0-9_-]/g, '_'),
+    product: gallery.product,
+    folder: gallery.folder,
+    file: img.file,
+    kind: img.kind,
+    url: absoluteUrl(base, img.url),
+    width: img.width || 0,
+    height: img.height || 0,
+    bytes: img.bytes || 0,
+    hasAlpha: img.kind === 'nobg' || Boolean(img.hasAlpha),
+    tags: [],
+    ocrText: '',
+    relevanceReason: 'folder_packshot',
+  };
+}
+
+/**
+ * Pasta deste produto. O scrape já gravou as fotos, mas o OCR ainda não rodou
+ * e o filtro estrito devolvia zero. Aqui a pasta é a prova: rejeita só lixo e conflito.
+ */
+function trustedFolderPackshots(gallery, { kind, base, limit }) {
+  const out = [];
+  for (const img of selectGalleryList(gallery, kind)) {
+    if (out.length >= limit) break;
+    const w = img.width || 0;
+    const h = img.height || 0;
+    if (w && h && (w < 400 || h < 400)) continue;
+    if (w && h) {
+      const ratio = w / Math.max(h, 1);
+      if (ratio > 2.2 || ratio < 0.35) continue;
+    }
+    if (looksLikeJunkStock(img.file) || looksLikeJunkStock(img.url || '')) continue;
+    const gate = passesUrlRelevanceGate(`${img.url || ''} ${img.file || ''}`, gallery.product || '');
+    if (!gate.ok && (gate.reason === 'junk' || String(gate.reason).startsWith('conflict'))) continue;
+    out.push(toFolderImage(gallery, img, base));
+  }
+  return out;
+}
+
+async function pickGalleryImages(gallery, opts) {
+  const strict = await diskGalleryImages(gallery, { ...opts, allowWeakEmpty: false });
+  if (strict.length >= opts.limit) return strict.slice(0, opts.limit);
+  const seen = new Set(strict.map((img) => img.url));
+  const merged = [...strict];
+  for (const img of trustedFolderPackshots(gallery, opts)) {
+    if (seen.has(img.url)) continue;
+    merged.push(img);
+    if (merged.length >= opts.limit) break;
+  }
+  return merged;
+}
+
+async function diskGalleryImages(
+  gallery,
+  { kind, base, ocrCache, query, limit, allowWeakEmpty = true }
+) {
+  const list = selectGalleryList(gallery, kind);
 
   const mapped = list.map((img, i) => {
     const ocrKey = `${img.kind}/${img.file}`;

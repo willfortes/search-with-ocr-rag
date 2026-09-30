@@ -114,9 +114,9 @@ export const DEPARTMENTS = [
   },
   {
     id: 'hortifruti',
-    match: ['banana', 'maca', 'maçã', 'tomate', 'alface', 'cebola', 'batata', 'cenoura', 'laranja', 'limao', 'limão', 'hortifruti', 'fruta', 'verdura'],
+    match: ['banana', 'maca', 'maçã', 'pera', 'kiwi', 'mamao', 'mamão', 'abacaxi', 'uva', 'morango', 'manga', 'tomate', 'alface', 'cebola', 'batata', 'cenoura', 'laranja', 'limao', 'limão', 'hortifruti', 'fruta', 'verdura'],
     boost: 'hortifruti fresco packshot',
-    urlPositive: ['fruta', 'tomate', 'banana', 'hortifruti', 'verdura'],
+    urlPositive: ['fruta', 'tomate', 'banana', 'pera', 'kiwi', 'mamao', 'abacaxi', 'uva', 'hortifruti', 'verdura'],
     urlConflict: ['detergente', 'mockup', 'pouch', 'oleo', 'cerveja'],
   },
   {
