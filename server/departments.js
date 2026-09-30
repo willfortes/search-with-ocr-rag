@@ -259,13 +259,10 @@ export function buildDepartmentSearchQuery(productName) {
   const name = String(productName || '').trim() || 'produto';
   const dept = detectDepartment(name);
   const nameNorm = normalize(name);
-  // Só acrescenta sinônimos quando NÃO há departamento (evita "carne bovina" duplicado)
-  const synBoost = dept
-    ? ''
-    : expandProductSynonyms(name)
-        .filter((t) => t.length >= 3 && !nameNorm.includes(t))
-        .slice(0, 2)
-        .join(' ');
+  const synBoost = expandProductSynonyms(name)
+    .filter((t) => t.length >= 4 && !nameNorm.includes(t))
+    .slice(0, 2)
+    .join(' ');
 
   const parts = [
     `"${name}"`,
