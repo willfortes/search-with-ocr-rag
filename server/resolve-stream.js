@@ -329,7 +329,8 @@ export async function resolveProductImagesStream(req, res) {
             base,
             ocrCache,
             query,
-            limit: need,
+            // A pasta pode já ter as primeiras fotos emitidas. Varre o lote inteiro e deixa o dedupe.
+            limit: Math.max(need, 20),
           });
           for (const img of disk) {
             if (closed || emitted >= limit) break;
