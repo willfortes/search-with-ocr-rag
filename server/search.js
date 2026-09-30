@@ -83,6 +83,36 @@ function extractFromBingHtml(html) {
   return results;
 }
 
+function plainSearchTerm(query) {
+  const quoted = String(query || '').match(/"([^"]+)"/);
+  return (quoted?.[1] || String(query || '').split(' ')[0] || '').trim();
+}
+
+async function findOpenverseImages(query, maxResults) {
+  const term = plainSearchTerm(query);
+  if (term.length < 2) return [];
+  const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(term)}&page_size=${Math.min(Math.max(maxResults, 8), 20)}`;
+  const res = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'CriarOfertas/1.0 (banco de imagens de encarte)',
+    },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.results || [])
+    .filter((item) => item?.url && /^https?:\/\//i.test(item.url))
+    .map((item) => ({
+      title: item.title || '',
+      url: item.url,
+      thumbnail: item.thumbnail || '',
+      width: item.width || 0,
+      height: item.height || 0,
+      source: 'openverse',
+    }));
+}
+
 /**
  * Busca imagens públicas via Bing Images (sem API key).
  * Substitui DuckDuckGo, que passou a retornar 403.
@@ -130,6 +160,29 @@ export async function findProductImages(query, { maxResults = 12 } = {}) {
     if (unique.length >= maxResults) break;
   }
 
+  try {
+    const extra = await findOpenverseImages(query, maxResults);
+    for (const item of extra) {
+      if (seen.has(item.url)) continue;
+      const title = String(item.title || '').toLowerCase();
+      const words = title.split(/\s+/).filter(Boolean);
+      if (words.length > 4) continue;
+      if (/aguardente|licor|cocktail|rua|obra|esta[cç][aã]o|r[oó]tula|cacha[cç]a|drink/.test(title)) continue;
+      seen.add(item.url);
+      unique.push({
+        index: unique.length,
+        title: item.title || '',
+        url: item.url,
+        thumbnail: item.thumbnail || '',
+        width: item.width || 0,
+        height: item.height || 0,
+        source: 'openverse',
+      });
+    }
+  } catch {
+    /* Openverse é complemento do Bing */
+  }
+
   if (!unique.length) {
     const detail = errors.slice(0, 3).join(' | ') || 'sem candidatos no HTML';
     throw new Error(`Nenhuma imagem encontrada no Bing (${detail})`);
@@ -158,6 +211,7 @@ export function scoreCandidate(item, query = '') {
     else if (gate.reason === 'department') score += 450_000;
   }
 
+  if (item.source === 'openverse') score += 2_000_000;
   if (url.includes('.png')) score += 500_000;
   if (url.includes('transparent') || url.includes('pngwing') || url.includes('cleanpng')) score += 200_000;
   if (url.includes('.webp')) score += 50_000;
