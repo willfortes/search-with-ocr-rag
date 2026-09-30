@@ -37,6 +37,19 @@ export const PRODUCT_SYNONYMS = {
   asa: ['asa', 'frango'],
   tilapia: ['tilapia', 'peixe'],
   salmao: ['salmao', 'peixe'],
+  mamao: ['mamao', 'papaya', 'formosa'],
+  pera: ['pera', 'pear'],
+  abacaxi: ['abacaxi', 'pineapple'],
+  uva: ['uva', 'grape'],
+  morango: ['morango', 'strawberry'],
+  limao: ['limao', 'lemon'],
+  laranja: ['laranja', 'orange'],
+  maca: ['maca', 'apple'],
+  banana: ['banana'],
+  kiwi: ['kiwi'],
+  goiaba: ['goiaba', 'guava'],
+  manga: ['manga', 'mango'],
+  melancia: ['melancia', 'watermelon'],
 };
 
 /**

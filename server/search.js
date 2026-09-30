@@ -194,7 +194,9 @@ export function rankCandidates(candidates, query = '') {
       if (looksLikeJunkStock(c.url || '') || looksLikeJunkStock(c.title || '')) return false;
       if (query) {
         const gate = passesUrlRelevanceGate(`${c.url || ''} ${c.title || ''}`, query);
-        if (!gate.ok) return false;
+        // no_signal é CDN sem o nome no link (Shopify, Cloudinary). A busca já foi do produto.
+        // junk e conflict continuam de fora.
+        if (!gate.ok && gate.reason !== 'no_signal') return false;
       }
       return true;
     })
