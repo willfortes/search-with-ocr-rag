@@ -127,6 +127,7 @@ export async function resolveProductImagesStream(req, res) {
 
   const emittedIds = new Set();
   let emitted = 0;
+  let curatedEmitted = 0;
 
   const emitImage = (img, source) => {
     if (!img?.url || emitted >= limit) return false;
@@ -183,10 +184,18 @@ export async function resolveProductImagesStream(req, res) {
         for (const img of relevant) {
           if (closed || emitted >= limit) break;
           emitImage(img, 'bank');
+          if (img.curated) curatedEmitted += 1;
         }
       } catch (err) {
         emit('status', { message: `Banco deu tilt (${err.message}) — partindo pro plano B…` });
       }
+    }
+
+    // Primeira página com foto curada (Drive): mostra só elas. Packshots antigos sem OCR
+    // e o Bing ficam para o "buscar mais" (offset > 0) — eram as fotos ruins junto do Drive
+    if (curatedEmitted > 0 && !(Number(body.offset) > 0)) {
+      emit('done', { ok: true, total: emitted, source: 'bank', hasMore: true });
+      return;
     }
 
     if (emitted >= limit) {
