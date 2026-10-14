@@ -32,6 +32,9 @@ services:
       # Ollama no host (Windows/Mac). No Linux use IP da bridge ou service ollama.
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      # Banco curado do Drive (POST /api/bank/import-drive)
+      DRIVE_IMAGES_FOLDER_ID: ${DRIVE_IMAGES_FOLDER_ID:-}
+      BANK_ADMIN_TOKEN: ${BANK_ADMIN_TOKEN:-}
     volumes:
       - ./downloads:/app/downloads
     depends_on:
