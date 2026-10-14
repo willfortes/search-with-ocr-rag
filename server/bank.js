@@ -12,6 +12,7 @@ import {
   checkEmbeddings,
   expandSearchQuery,
 } from './embeddings.js';
+import { readFolderSource } from './drive-import.js';
 
 const MEILI_HOST = process.env.MEILI_HOST || 'http://127.0.0.1:7700';
 const MEILI_KEY = process.env.MEILI_MASTER_KEY || 'dev_master_key_change_me';
@@ -77,7 +78,7 @@ export async function ensureIndex() {
   const index = meili.index(INDEX_UID);
   const settingsTask = await index.updateSettings({
     searchableAttributes: ['product', 'folder', 'folderLabel', 'detectedProduct', 'file', 'ocrText', 'ragText', 'kind', 'tags'],
-    filterableAttributes: ['folder', 'kind', 'hasAlpha', 'product', 'mismatched', 'detectedBrand'],
+    filterableAttributes: ['folder', 'kind', 'hasAlpha', 'product', 'mismatched', 'detectedBrand', 'curated', 'department'],
     sortableAttributes: ['width', 'height', 'bytes', 'indexedAt'],
     synonyms: meilisearchSynonyms(),
     displayedAttributes: [
@@ -100,6 +101,8 @@ export async function ensureIndex() {
       'tags',
       'indexedAt',
       'hasEmbedding',
+      'curated',
+      'department',
     ],
   });
   await getClient().tasks.waitForTask(settingsTask.taskUid, { timeout: 60000 });
@@ -304,27 +307,40 @@ async function mapPool(items, concurrency, fn) {
   return results;
 }
 
-function buildDocumentsFromGallery(gallery, { ocrMap = new Map() } = {}) {
+function buildDocumentsFromGallery(gallery, { ocrMap = new Map(), source = null } = {}) {
   const docs = [];
+  // Imagens do banco curado (Drive): o nome do produto é confiável mesmo sem texto no OCR
+  const curatedFiles = new Set(source?.files || []);
+  // "HORTIFRUTI/FRUTAS" → "hortifruti frutas" — ajuda a busca semântica ("fruta", "açougue"…)
+  const department = (source?.departments || []).join(' ').replace(/\//g, ' ').toLowerCase() || null;
   const push = (img, kind) => {
     const id = `${gallery.folder}__${kind}__${img.file}`.replace(/[^a-zA-Z0-9_-]/g, '_');
     const ocrKey = `${kind}/${img.file}`;
     const ocrText = ocrMap.get(ocrKey) || '';
+    const curated = curatedFiles.has(img.file);
     const inferred = inferProductFromOcr({
       folder: gallery.folder,
       product: gallery.product,
       ocrText,
     });
-    // Se OCR detectou outro produto (Heineken na pasta "vem"), usa o nome detectado na busca
-    const productLabel = inferred.mismatched
-      ? inferred.label
-      : gallery.product;
+    // Se OCR detectou outro produto (Heineken na pasta "vem"), usa o nome detectado na busca.
+    // Curadas mantêm o rótulo do Drive (etiqueta de fruta no OCR não muda o produto).
+    const productLabel = curated
+      ? source.label || gallery.product
+      : inferred.mismatched
+        ? inferred.label
+        : gallery.product;
     const tags = buildSearchTags({
       product: productLabel,
       folder: gallery.folder,
       file: img.file,
       ocrText,
     });
+    if (curated && department) {
+      for (const part of department.split(/\s+/)) {
+        if (part.length >= 3 && !tags.includes(part)) tags.push(part);
+      }
+    }
     const ragText = buildRagText({
       product: productLabel,
       folder: gallery.folder,
@@ -338,9 +354,9 @@ function buildDocumentsFromGallery(gallery, { ocrMap = new Map() } = {}) {
       product: productLabel,
       folder: gallery.folder,
       folderLabel: gallery.product,
-      detectedProduct: inferred.mismatched ? inferred.label : null,
+      detectedProduct: !curated && inferred.mismatched ? inferred.label : null,
       detectedBrand: inferred.brand,
-      mismatched: Boolean(inferred.mismatched),
+      mismatched: !curated && Boolean(inferred.mismatched),
       file: img.file,
       kind,
       url: img.url,
@@ -351,6 +367,8 @@ function buildDocumentsFromGallery(gallery, { ocrMap = new Map() } = {}) {
       ocrText,
       ragText,
       tags,
+      curated,
+      department: curated ? department : null,
       indexedAt: Date.now(),
       absolutePath: path.join(
         DOWNLOADS_ROOT,
@@ -465,7 +483,8 @@ export async function indexBank({
       await saveOcrCache(gallery.folder, cache);
     }
 
-    const docs = buildDocumentsFromGallery(gallery, { ocrMap });
+    const source = await readFolderSource(gallery.folder);
+    const docs = buildDocumentsFromGallery(gallery, { ocrMap, source });
 
     if (embedModel) {
       for (const doc of docs) {
@@ -525,7 +544,8 @@ export async function searchBank(
   const index = getClient().index(INDEX_UID);
 
   const filters = [];
-  if (kind) filters.push(`kind = "${kind}"`);
+  // Curadas (Drive) entram em qualquer kind: as transparentes ficam em nobg/, as de fundo branco em original/
+  if (kind) filters.push(`(kind = "${kind}" OR curated = true)`);
   if (folder) filters.push(`folder = "${folder}"`);
 
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);

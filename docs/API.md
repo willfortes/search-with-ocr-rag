@@ -334,6 +334,25 @@ OCR pontual em um arquivo.
 
 Atalho de preview da galeria local (mesmo que `/api/products/:folder`).
 
+### `POST /api/bank/import-drive` · `GET /api/bank/import-drive`
+
+Importa o banco curado de uma pasta pública do Google Drive e reindexa (OCR + embeddings).
+Roda em segundo plano — o POST responde `202` e o GET mostra o progresso.
+
+```json
+{ "folder": "https://drive.google.com/drive/folders/<id>", "withOcr": true, "withEmbeddings": true }
+```
+
+- `folder` é opcional se `DRIVE_IMAGES_FOLDER_ID` estiver definido.
+- Com `BANK_ADMIN_TOKEN` definido, envie o header `x-admin-token`.
+- Estrutura esperada: `DEPARTAMENTO/[SUB]/<JPG E PNG | WEBP>/<Nome do Produto>.ext`.
+  O nome do arquivo vira o rótulo; variantes JPG/PNG/WEBP da mesma foto viram uma só.
+- Saída: `downloads/<produto>/nobg/drive_*.webp` (transparente) ou `original/` + `.source.json`.
+- Idempotente: `downloads/.drive-import.json` guarda os ids já importados — rode de novo para puxar só as fotos novas.
+
+Imagens importadas são **curadas** (`curated: true` no índice): o rótulo vale como evidência mesmo sem texto no OCR
+(fruta, carne, verdura), entram em qualquer `kind` e ficam à frente das fotos do Bing.
+
 ---
 
 ## Arquivos estáticos

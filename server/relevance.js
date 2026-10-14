@@ -334,6 +334,7 @@ export function scoreProductRelevance(
     allowWeakEmpty = false,
     url = '',
     file = '',
+    curated = false,
   } = {}
 ) {
   const qTokens = expandQueryTokens(query);
@@ -399,6 +400,15 @@ export function scoreProductRelevance(
     }
   }
 
+  // Banco curado (Drive): o rótulo é confiável — fruta/carne não tem texto para o OCR ler.
+  // Bônus faz a foto curada vencer o packshot do Bing quando os dois batem.
+  if (curated && hits > 0 && (strongHits > 0 || !queryCats.length)) {
+    const strongTokens = qTokens.filter((t) => t.length >= 3 && !WEAK_QUERY_TOKENS.has(t));
+    const covered = strongTokens.filter((t) => tagStr.includes(t) || ocr.includes(t)).length;
+    const coverage = strongTokens.length ? covered / strongTokens.length : 1;
+    return { ok: true, score: score + 6 + Math.round(coverage * 6), reason: 'curated' };
+  }
+
   const ocrTokens = meaningfulTokens(ocrText);
   if (ocrTokens.length >= 4 && hits === 0) {
     return { ok: false, score: 0, reason: 'ocr_unrelated' };
@@ -448,6 +458,7 @@ export function filterRelevantImages(images, query, { allowWeakEmpty = false } =
       mismatched: Boolean(img.mismatched),
       url: img.url || img.sourceUrl || '',
       file: img.file || '',
+      curated: Boolean(img.curated),
     };
     // Stock genérico (carrinho/loja) nunca passa — nem no modo fraco
     if (looksLikeJunkStock(meta.url) || looksLikeJunkStock(meta.file)) continue;

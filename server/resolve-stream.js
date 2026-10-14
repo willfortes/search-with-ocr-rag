@@ -66,6 +66,8 @@ function mapHit(hit, base) {
     hasAlpha: Boolean(hit.hasAlpha),
     tags: hit.tags || [],
     ocrText: hit.ocrText || '',
+    curated: Boolean(hit.curated),
+    department: hit.department || null,
   };
 }
 

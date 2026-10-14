@@ -8,10 +8,75 @@ import {
   runOcrOnFile,
 } from './bank.js';
 import { getProductGallery, sanitizeFolderName, DOWNLOADS_ROOT } from './download.js';
+import { importDriveFolder } from './drive-import.js';
 import path from 'path';
+
+const DEFAULT_DRIVE_FOLDER = process.env.DRIVE_IMAGES_FOLDER_ID || '';
+
+/** Job único de importação do Drive (download + OCR + embeddings leva dezenas de minutos). */
+let driveJob = null;
+
+function requireAdmin(req, res) {
+  const token = process.env.BANK_ADMIN_TOKEN;
+  if (!token) return true;
+  const sent = req.get('x-admin-token') || req.query.token;
+  if (sent === token) return true;
+  res.status(401).json({ error: 'x-admin-token inválido' });
+  return false;
+}
+
+function driveFolderIdFrom(input) {
+  const raw = String(input || '').trim();
+  const m = raw.match(/folders\/([A-Za-z0-9_-]+)/) || raw.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  return m ? m[1] : raw;
+}
 
 export function createBankRouter() {
   const router = express.Router();
+
+  router.get('/import-drive', (_req, res) => {
+    res.json(driveJob || { status: 'idle' });
+  });
+
+  router.post('/import-drive', async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    if (driveJob?.status === 'running') {
+      return res.status(409).json({ error: 'Importação já em andamento', job: driveJob });
+    }
+    const folderId = driveFolderIdFrom(req.body?.folder || req.body?.folderId || DEFAULT_DRIVE_FOLDER);
+    if (!folderId) return res.status(400).json({ error: 'Informe folder (link ou id da pasta do Drive)' });
+    const withOcr = req.body?.withOcr !== false;
+    const withEmbeddings = req.body?.withEmbeddings !== false;
+
+    driveJob = { status: 'running', folderId, startedAt: new Date().toISOString(), stage: 'import', progress: null };
+    res.status(202).json(driveJob);
+
+    try {
+      const imported = await importDriveFolder({
+        folderId,
+        onProgress: (p) => {
+          driveJob.progress = p;
+        },
+      });
+      driveJob.import = { ...imported, folders: imported.folders.length, junk: imported.junk.length };
+      driveJob.stage = 'index';
+      // Indexa tudo de uma vez (ensureIndex por pasta seria lento); OCR já feito fica em cache
+      const indexed = await indexBank({
+        withOcr,
+        withEmbeddings,
+        onProgress: (p) => {
+          driveJob.progress = p;
+        },
+      });
+      driveJob.index = indexed;
+      driveJob.status = 'done';
+    } catch (err) {
+      driveJob.status = 'error';
+      driveJob.error = err.message;
+    } finally {
+      driveJob.finishedAt = new Date().toISOString();
+    }
+  });
 
   router.get('/health', async (_req, res) => {
     const bank = await checkBank();
