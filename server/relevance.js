@@ -265,10 +265,39 @@ function meaningfulTokens(text) {
     .filter((t) => t.length >= 3 && !/^\d+$/.test(t));
 }
 
+const INVARIANT_PLURAL = new Set(['simples', 'lapis', 'onibus', 'pires', 'virus', 'atlas', 'tenis', 'oculos', 'cais', 'mais', 'tres', 'seis']);
+
+/**
+ * Singular em português (já sem acento): pães→pao, limões→limao, pastéis→pastel,
+ * flores→flor, bombons→bombom, tomates→tomate. Rótulos do banco estão no singular.
+ */
+export function singularPt(word) {
+  const w = String(word || '');
+  if (w.length < 4 || /^\d/.test(w) || INVARIANT_PLURAL.has(w)) return w;
+  if (/(oes|aes)$/.test(w)) return w.slice(0, -3) + 'ao';
+  if (/eses$/.test(w)) return w.slice(0, -2);
+  if (/ais$/.test(w)) return w.slice(0, -3) + 'al';
+  if (/eis$/.test(w)) return w.slice(0, -3) + 'el';
+  if (/[rz]es$/.test(w)) return w.slice(0, -2);
+  if (/ns$/.test(w)) return w.slice(0, -2) + 'm';
+  if (/[aeiou]s$/.test(w)) return w.slice(0, -1);
+  return w;
+}
+
+/** Query normalizada com cada palavra no singular ("pães franceses" → "pao frances"). */
+export function singularizeQuery(query) {
+  return normalize(query)
+    .split(/\s+/)
+    .map(singularPt)
+    .join(' ')
+    .trim();
+}
+
 /** Expande query curta com aliases (coca → coca cola coke…) + sinônimos de corte/dept */
 export function expandQueryTokens(query) {
   const n = normalize(query);
   const tokens = new Set(meaningfulTokens(query));
+  for (const t of [...tokens]) tokens.add(singularPt(t));
   for (const [brand, aliases] of Object.entries(BRAND_ALIASES)) {
     if (n === brand || n.includes(brand) || aliases.some((a) => n === normalize(a) || n.includes(normalize(a)))) {
       for (const a of aliases) tokens.add(normalize(a).replace(/-/g, ''));
@@ -347,12 +376,13 @@ export function scoreProductRelevance(
     return { ok: false, score: 0, reason: 'empty_query' };
   }
 
-  if (looksLikeJunkStock(url) || looksLikeJunkStock(file) || looksLikeJunkStock(product)) {
+  // Curadas: rótulo confiável — "pão de queijo" não é a loja "Pão de Açúcar"
+  if (!curated && (looksLikeJunkStock(url) || looksLikeJunkStock(file) || looksLikeJunkStock(product))) {
     return { ok: false, score: -25, reason: 'junk_stock_url' };
   }
 
   // Gate de departamento na URL (carne ≠ óleo, etc.)
-  if (url) {
+  if (url && !curated) {
     const gate = passesUrlRelevanceGate(`${url} ${file} ${product}`, query);
     if (!gate.ok && (gate.reason === 'junk' || gate.reason.startsWith('conflict'))) {
       return { ok: false, score: -22, reason: `url_${gate.reason}` };
@@ -461,14 +491,15 @@ export function filterRelevantImages(images, query, { allowWeakEmpty = false } =
       curated: Boolean(img.curated),
     };
     // Stock genérico (carrinho/loja) nunca passa — nem no modo fraco
-    if (looksLikeJunkStock(meta.url) || looksLikeJunkStock(meta.file)) continue;
+    if (!meta.curated && (looksLikeJunkStock(meta.url) || looksLikeJunkStock(meta.file))) continue;
 
     const strict = scoreProductRelevance(query, { ...meta, allowWeakEmpty: false });
     if (strict.ok) {
       strong.push({ ...img, relevanceScore: strict.score, relevanceReason: strict.reason });
       continue;
     }
-    if (allowWeakEmpty) {
+    // Curada que não bateu pelo rótulo é outro produto (fraldinha ≠ feijão fradinho)
+    if (allowWeakEmpty && !meta.curated) {
       const soft = scoreProductRelevance(query, { ...meta, allowWeakEmpty: true });
       // weak_empty só se OCR vazio E URL não for lixo — ainda assim score baixo
       if (soft.ok && soft.reason === 'weak_empty') {

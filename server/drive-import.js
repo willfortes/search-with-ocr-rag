@@ -35,11 +35,13 @@ export function cleanDriveProductName(stem) {
     .replace(/D_NQ_NP_.*$/i, ' ')
     .replace(/MLB\d+.*$/i, ' ')
     .replace(/\d{2,4}x\d{2,4}/g, ' ')
-    .replace(/\b\d{6,}\b.*$/, ' ')
-    .replace(/\d*\s*\b[a-f0-9]{16,}\b/gi, ' ')
     .replace(/promocional|promoco|imperdivel|download/gi, ' ')
     .replace(/png(?=[^a-z]|$)/gi, ' ')
     .replace(/[_.-]+/g, ' ')
+    // depois de trocar "_" por espaço, senão \b não separa "bovina_1596454050"
+    .replace(/\b\d{5,}\b.*$/, ' ')
+    .replace(/\d*\s*\b[a-f0-9]{16,}\b/gi, ' ')
+    .replace(/\bjpe?g\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     // variações numeradas do mesmo produto: "Tomate1", "Abacaxi Ananá 3 1" → mesmo nome

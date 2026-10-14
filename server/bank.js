@@ -13,6 +13,7 @@ import {
   expandSearchQuery,
 } from './embeddings.js';
 import { readFolderSource } from './drive-import.js';
+import { singularizeQuery } from './relevance.js';
 
 const MEILI_HOST = process.env.MEILI_HOST || 'http://127.0.0.1:7700';
 const MEILI_KEY = process.env.MEILI_MASTER_KEY || 'dev_master_key_change_me';
@@ -552,7 +553,8 @@ export async function searchBank(
   const safeOffset = Math.max(Number(offset) || 0, 0);
   const filter = filters.length ? filters.join(' AND ') : undefined;
 
-  let searchQuery = query || '';
+  // Rótulos estão no singular: "pães" → "pao" (sem embeddings, a busca é só por palavra)
+  let searchQuery = singularizeQuery(query) || query || '';
   let mode = 'keyword';
   let expanded = null;
 
@@ -573,23 +575,9 @@ export async function searchBank(
           semanticRatio: 0.55,
         };
         mode = 'hybrid';
-      } else {
-        expanded = await expandSearchQuery(query);
-        if (expanded && expanded !== query) {
-          searchQuery = expanded;
-          mode = 'expanded';
-        }
       }
     } catch {
-      try {
-        expanded = await expandSearchQuery(query);
-        if (expanded && expanded !== query) {
-          searchQuery = expanded;
-          mode = 'expanded';
-        }
-      } catch {
-        mode = 'keyword';
-      }
+      mode = 'keyword';
     }
   }
 
@@ -597,20 +585,27 @@ export async function searchBank(
   try {
     result = await index.search(searchQuery, searchParams);
   } catch (err) {
-    if (searchParams.hybrid) {
-      delete searchParams.vector;
-      delete searchParams.hybrid;
-      try {
-        expanded = expanded || (await expandSearchQuery(query));
-        searchQuery = expanded || query || '';
-        mode = expanded && expanded !== query ? 'expanded' : 'keyword_fallback';
-        result = await index.search(searchQuery, searchParams);
-      } catch {
-        result = await index.search(query || '', searchParams);
-        mode = 'keyword_fallback';
+    if (!searchParams.hybrid) throw err;
+    delete searchParams.vector;
+    delete searchParams.hybrid;
+    mode = 'keyword_fallback';
+    result = await index.search(searchQuery, searchParams);
+  }
+
+  // Expansão via LLM só quando a palavra não achou nada — antes ela trocava a query
+  // sempre (perdia o singular "pães"→"pao" e custava segundos por busca)
+  if (hybrid && query && !result.hits.length && !searchParams.hybrid) {
+    try {
+      expanded = await expandSearchQuery(query);
+      if (expanded && expanded !== query) {
+        const retry = await index.search(singularizeQuery(expanded) || expanded, searchParams);
+        if (retry.hits.length) {
+          result = retry;
+          mode = 'expanded';
+        }
       }
-    } else {
-      throw err;
+    } catch {
+      /* fica com o resultado por palavra */
     }
   }
 
